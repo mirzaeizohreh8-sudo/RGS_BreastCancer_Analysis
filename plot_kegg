@@ -1,0 +1,45 @@
+#############################################################
+# Bubble plot for enrichment analysis results
+# Description: This script generates bubble plots for GO/KEGG
+# enrichment results (BP, MF, CC, KEGG).
+# Input: Tab-delimited text files with columns:
+#        - RF (Rich Factor)
+#        - Term (Pathway or GO term)
+#        - P.value
+#        - Gene (Gene number)
+# Output: PDF bubble plots
+#############################################################
+
+# Load required libraries
+library(affy)
+library(oligo)
+library(limma)
+library(ggplot2)
+
+# Define a general function for bubble plot
+plot_bubble <- function(data, output_file, base_size = 9) {
+  p <- ggplot(data, aes(x = RF, y = Term)) +
+    geom_point(aes(colour = P.value, size = Gene)) +
+    scale_color_gradientn(colours = rainbow(5)) +
+    labs(x = "Rich Factor", y = NULL,
+         colour = "P.value", size = "Gene Number") +
+    theme(axis.title = element_text(face = "bold"),
+          axis.text = element_text(face = "bold")) +
+    theme_gray(base_size = base_size)
+  
+  pdf(output_file)
+  print(p)
+  dev.off()
+}
+
+# Example usage:
+# Note: replace "BP.txt", "KEGG.txt", etc. with your own files
+BP   <- read.delim("BP.txt")
+KEGG <- read.delim("KEGG.txt")
+MF   <- read.delim("MF.txt")
+CC   <- read.delim("CC.txt")
+
+plot_bubble(BP,   "BP.pdf")
+plot_bubble(KEGG, "KEGG.pdf", base_size = 11)
+plot_bubble(MF,   "MF.pdf")
+plot_bubble(CC,   "CC.pdf")
