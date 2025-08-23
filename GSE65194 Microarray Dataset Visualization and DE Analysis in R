@@ -18,7 +18,7 @@ library(writexl)
 library(ggrepel)
 
 # --- 2. Load dataset ---
-file_path <- "F:/darsi/RGS/R/GSE65194/GSE65194_series_matrix.txt.gz"
+gse <- getGEO("GSE65194", GSEMatrix=TRUE, getGPL=TRUE)[[1]]
 gse <- getGEO(filename = file_path, getGPL = TRUE)  
 exprs_raw <- exprs(gse)
 pData <- pData(gse)
