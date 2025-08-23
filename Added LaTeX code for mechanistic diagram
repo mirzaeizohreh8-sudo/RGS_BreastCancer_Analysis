@@ -1,0 +1,86 @@
+\documentclass{standalone}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows.meta, positioning, shadows}
+\begin{document}
+\begin{tikzpicture}[
+box/.style={rectangle, draw, rounded corners, fill=gray!10, minimum height=1.2em, minimum width=4.5em, align=center, drop shadow},
+good/.style={box, fill=green!20},
+poor/.style={box, fill=red!20},
+path/.style={box, fill=blue!20},
+immune/.style={box, fill=yellow!20},
+outcome/.style={box, fill=purple!20},
+arrow/.style={-Stealth, thick},
+posarrow/.style={arrow, green!70!black},
+negarrow/.style={arrow, red!70!black},
+font=\footnotesize,
+node distance=2cm and 6cm
+]
+
+% Panel a: RGS5
+\node[good] (rgs5) at (0,0) {RGS5 (↓)};
+\node[path] (rgs5_path) at (0,-2) {NF-kappa B / MAPK \\ \textit{(family-level / lit.)}};
+\node[immune] (rgs5_immune) at (0,-4) {CD8+ T cells, Macrophages \\ \textit{(TIMER)}};
+\node[outcome] (rgs5_outcome) at (0,-6) {Better OS/RFS};
+\draw[posarrow] (rgs5) -- (rgs5_path) node[midway, left] {Inhibits};
+\draw[posarrow] (rgs5_path) -- (rgs5_immune) node[midway, left] {Associates};
+\draw[posarrow] (rgs5_immune) -- (rgs5_outcome) node[midway, left] {Improves};
+\node[left=0.5cm of rgs5, font=\normalsize] {(a)};
+
+% Panel b: RGS12
+\node[good] (rgs12) at (6,0) {RGS12 (↓)};
+\node[path] (rgs12_path) at (6,-2) {GTPase / MAPK \\ \textit{(lit.: inhibits AKT/mTOR)}};
+\node[immune] (rgs12_immune) at (6,-4) {CD4+ T cells, B cells \\ \textit{(TIMER)}};
+\node[outcome] (rgs12_outcome) at (6,-6) {Better OS/RFS};
+\draw[posarrow] (rgs12) -- (rgs12_path) node[midway, left] {Regulates};
+\draw[posarrow] (rgs12_path) -- (rgs12_immune) node[midway, left] {Associates};
+\draw[posarrow] (rgs12_immune) -- (rgs12_outcome) node[midway, left] {Improves};
+\node[left=0.5cm of rgs12, font=\normalsize] {(b)};
+
+% Panel c: RGS18
+\node[good] (rgs18) at (12,0) {RGS18 (↓)};
+\node[path] (rgs18_path) at (12,-2) {NF-kappa B \\ \textit{(family-level)}};
+\node[immune] (rgs18_immune) at (12,-4) {CD8+ T, CD4+ T, B, Macrophages, \\ Neutrophils, DCs \\ \textit{(TIMER, strong)}};
+\node[outcome] (rgs18_outcome) at (12,-6) {Better OS/RFS};
+\draw[posarrow] (rgs18) -- (rgs18_path) node[midway, left] {Suppresses};
+\draw[posarrow] (rgs18_path) -- (rgs18_immune) node[midway, left] {Boosts};
+\draw[posarrow] (rgs18_immune) -- (rgs18_outcome) node[midway, left] {Improves};
+\node[left=0.5cm of rgs18, font=\normalsize] {(c)};
+
+% Panel d: RGS3
+\node[poor] (rgs3) at (0,-8) {RGS3 (↓)};
+\node[path] (rgs3_path) at (0,-10) {NF-kappa B / MAPK \\ \textit{(family-level)}};
+\node[immune] (rgs3_immune) at (0,-12) {CD8+ T, CD4+ T, Macrophages, \\ Neutrophils, DCs \\ \textit{(TIMER)}};
+\node[outcome] (rgs3_outcome) at (0,-14) {Poorer OS};
+\draw[negarrow] (rgs3) -- (rgs3_path) node[midway, left] {Activates};
+\draw[negarrow] (rgs3_path) -- (rgs3_immune) node[midway, left] {Associates};
+\draw[negarrow] (rgs3_immune) -- (rgs3_outcome) node[midway, left] {Worsens};
+\node[left=0.5cm of rgs3, font=\normalsize] {(d)};
+
+% Panel e: RGS16
+\node[poor] (rgs16) at (6,-8) {RGS16 (↓)};
+\node[path] (rgs16_path) at (6,-10) {PI3K/AKT \\ \textit{(lit., BC-specific)}};
+\node[immune] (rgs16_immune) at (6,-12) {CD8+ T, CD4+ T, B, Macrophages, \\ Neutrophils, DCs \textit{(TIMER)}};
+\node[outcome] (rgs16_outcome) at (6,-14) {Poorer OS};
+\draw[negarrow] (rgs16) -- (rgs16_path) node[midway, left] {Loss ↑ PI3K};
+\draw[posarrow] (rgs16_path) -- (rgs16_immune) node[midway, left] {Associates};
+\draw[negarrow] (rgs16_immune) -- (rgs16_outcome) node[midway, left] {Worsens};
+\node[left=0.5cm of rgs16, font=\normalsize] {(e)};
+
+% Panel f: RGS4
+\node[poor] (rgs4) at (12,-8) {RGS4 (↑)};
+\node[path] (rgs4_path) at (12,-10) {NF-kappa B \\ \textit{(hyp.)}};
+\node[immune] (rgs4_immune) at (12,-12) {CD8+ T, Macrophages, Neutrophils, DCs \\ \textit{(TIMER)}};
+\node[outcome] (rgs4_outcome) at (12,-14) {Poorer RFS \\ \textit{(context-dependent)}};
+\draw[negarrow] (rgs4) -- (rgs4_path) node[midway, left] {Activates?};
+\draw[posarrow] (rgs4_path) -- (rgs4_immune) node[midway, left] {Associates};
+\draw[negarrow] (rgs4_immune) -- (rgs4_outcome) node[midway, left] {Worsens};
+\node[left=0.5cm of rgs4, font=\normalsize] {(f)};
+
+% Labels
+\node[above=0.5cm of rgs5, font=\normalsize] {Favorable Prognosis};
+\node[above=0.5cm of rgs3, font=\normalsize] {Unfavorable Prognosis};
+\node[box, fill=gray!30, minimum width=18cm, align=center] at (6,-16) 
+{All RGS Family Members Regulate GTPase Activity as a Base Mechanism};
+
+\end{tikzpicture}
+\end{document}
