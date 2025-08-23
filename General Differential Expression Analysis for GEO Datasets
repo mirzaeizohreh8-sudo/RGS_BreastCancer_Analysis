@@ -1,0 +1,104 @@
+###############################################################
+# General Differential Expression Analysis for GEO Datasets
+# Description: Template script for analyzing breast cancer datasets
+#              (e.g., GSE29431, GSE45827, etc.) with RGS gene focus.
+# Note: Adjust dataset_id for each dataset. Cell lines (if any) are excluded.
+#       Data is retrieved directly from GEO; assumes preprocessed series matrix.
+###############################################################
+
+# --- 1. Install and load packages ---
+if (!requireNamespace("BiocManager", quietly=TRUE)) install.packages("BiocManager")
+BiocManager::install(c("limma", "GEOquery", "annotate", "hgu133plus2.db"), ask=FALSE, update=FALSE)
+install.packages(c("ggplot2", "reshape2", "writexl", "ggrepel"))
+
+library(GEOquery)
+library(limma)
+library(annotate)
+library(hgu133plus2.db)
+library(ggplot2)
+library(reshape2)
+library(writexl)
+library(ggrepel)
+
+# --- 2. Load dataset (automatic download from GEO) ---
+# Change this ID for each dataset
+dataset_id <- "GSE45827"  # e.g., "GSE29431", "GSE42568", etc.
+gse <- getGEO(GEO = dataset_id, GSEMatrix = TRUE)
+if (is.list(gse)) gse <- gse[[1]]  # Use first entry if multiple platforms
+exprs_raw <- exprs(gse)
+pData <- pData(gse)
+
+# --- 3. Exclude cell lines (if any) ---
+# Define cell_lines only if dataset contains cell lines beyond tumor/normal groups.
+# Leave empty if dataset has only tumor and normal samples, or if cell lines are pre-excluded.
+# Example for GSE45827: cell_lines <- paste0("GSM11161", 55:68)
+cell_lines <- c()  # Empty by default; update if cell lines exist (e.g., GSE45827)
+if (length(cell_lines) > 0) {
+  exprs_raw <- exprs_raw[, !(colnames(exprs_raw) %in% cell_lines)]
+  pData <- pData[!(rownames(pData) %in% cell_lines), ]
+}
+
+# --- 4. Define groups (Normal vs Tumor) based on title ---
+group_list <- ifelse(grepl("normal", pData$title, ignore.case = TRUE), "normal", "tumor")
+group_list <- factor(group_list, levels = c("normal", "tumor"))
+table(group_list)  # Check group distribution
+
+# --- 5. Filter expression data to match pData ---
+exprs_filtered <- exprs_raw[, rownames(pData)]  # Ensure alignment
+
+# --- 6. Normalize between arrays (optional, skip if preprocessed) ---
+# Note: Skip if data is already normalized/log-transformed
+if (max(exprs_filtered, na.rm=TRUE) > 50) {
+  exprs_norm <- normalizeBetweenArrays(exprs_filtered, method = "quantile")
+  message("Applied quantile normalization.")
+} else {
+  exprs_norm <- exprs_filtered
+  message("Data assumed preprocessed; normalization skipped.")
+}
+
+# --- 7. Visualization (Boxplot) ---
+boxplot(exprs_norm, las = 2, outline = FALSE,
+        col = ifelse(group_list == "tumor", "tomato", "lightgreen"),
+        main = paste("Boxplot of Expression Data -", dataset_id))
+legend("topright", legend = c("Tumor", "Normal"), fill = c("tomato", "lightgreen"))
+
+# --- 8. Differential expression with limma ---
+design <- model.matrix(~ 0 + group_list)
+colnames(design) <- levels(group_list)
+contrast_matrix <- makeContrasts(tumor - normal, levels = design)
+fit <- lmFit(exprs_norm, design)
+fit2 <- contrasts.fit(fit, contrast_matrix)
+fit2 <- eBayes(fit2)
+
+deg_results <- topTable(fit2, number = Inf, adjust.method = "BH")
+deg_results$symbol <- getSYMBOL(rownames(deg_results), "hgu133plus2.db")  # Gene symbols
+
+# --- 9. Focus on RGS gene family ---
+rgs_genes <- c("RGS1", "RGS2", "RGS3", "RGS4", "RGS5", "RGS6", "RGS7", "RGS8", "RGS9",
+               "RGS10", "RGS11", "RGS12", "RGS13", "RGS14", "RGS16", "RGS18", "RGS19",
+               "RGS20", "RGS21", "RGS22")
+deg_rgs <- deg_results[deg_results$symbol %in% rgs_genes, ]
+deg_rgs_sig <- subset(deg_rgs, abs(logFC) > 1 & adj.P.Val < 0.05)
+
+# --- 10. Save results ---
+write_xlsx(list(All_RGS = deg_rgs, Significant_RGS = deg_rgs_sig),
+           path = paste0("deg_rgs_results_", dataset_id, ".xlsx"))
+
+# --- 11. Volcano plot ---
+deg_all <- deg_results
+deg_all$negLogP <- -log10(deg_all$adj.P.Val)
+deg_sig <- subset(deg_all, abs(logFC) > 1 & adj.P.Val < 0.05)
+
+p <- ggplot(deg_all, aes(x = logFC, y = negLogP)) +
+  geom_point(aes(color = ifelse(abs(logFC) > 1 & adj.P.Val < 0.05, "Significant", "NS")),
+             alpha = 0.6, size = 1.2) +
+  scale_color_manual(values = c("Significant" = "red", "NS" = "grey")) +
+  geom_vline(xintercept = c(-1, 1), linetype = "dashed") +
+  geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+  geom_point(data = deg_rgs_sig, aes(x = logFC, y = negLogP), shape = 21,
+             fill = "yellow", color = "black", size = 3) +
+  geom_text_repel(data = deg_rgs_sig, aes(label = symbol), size = 3) +
+  labs(title = paste("Volcano Plot:", dataset_id), x = "log2 Fold Change", y = "-log10(P-value)") +
+  theme_minimal()
+print(p)
+ggsave(paste0("volcano_", dataset_id, ".png"), p, width = 6, height = 5)
