@@ -1,0 +1,121 @@
+###############################################################
+# Differential Expression Analysis for GSE65194
+# Description: Download, preprocess, normalize and analyze 
+#              microarray data (Normal vs Cancer samples).
+###############################################################
+
+# --- 1. Install and load packages ---
+if (!requireNamespace("BiocManager", quietly=TRUE)) install.packages("BiocManager")
+BiocManager::install(c("limma", "GEOquery", "annotate"), ask=FALSE, update=FALSE)
+install.packages(c("ggplot2", "reshape2", "writexl", "ggrepel"))
+
+library(GEOquery)
+library(limma)
+library(annotate)
+library(ggplot2)
+library(reshape2)
+library(writexl)
+library(ggrepel)
+
+# --- 2. Load dataset ---
+file_path <- "F:/darsi/RGS/R/GSE65194/GSE65194_series_matrix.txt.gz"
+gse <- getGEO(filename = file_path, getGPL = TRUE)  
+exprs_raw <- exprs(gse)
+pData <- pData(gse)
+
+# --- 3. Define groups (Normal vs Cancer) ---
+normals <- c("GSM1589130","GSM1589132","GSM1589135","GSM1589136","GSM1589139",
+             "GSM1589142","GSM1589144","GSM1589145","GSM1589148","GSM1589150","GSM1589151")
+
+all_samples <- colnames(exprs_raw)
+cancers <- setdiff(all_samples, normals)
+
+exprs <- exprs_raw[, c(normals, cancers)]
+group <- factor(ifelse(colnames(exprs) %in% normals, "Normal", "Cancer"),
+                levels = c("Normal","Cancer"))
+
+# --- 4. Log2 transform (if needed) ---
+if (max(exprs, na.rm=TRUE) > 50) {
+  exprs <- log2(exprs + 1)
+  message("Applied log2(x+1) transform.")
+}
+
+# --- 5. Collapse probes to gene symbols ---
+fdata <- fData(gse)
+if ("Gene Symbol" %in% colnames(fdata)) {
+  gene_symbols <- fdata[rownames(exprs), "Gene Symbol"]
+} else {
+  stop("No 'Gene Symbol' column found in featureData.")
+}
+
+valid_idx <- !is.na(gene_symbols) & gene_symbols != ""
+exprs_valid <- exprs[valid_idx, ]
+gene_symbols_valid <- gene_symbols[valid_idx]
+exprs_by_gene <- avereps(exprs_valid, ID = gene_symbols_valid)
+
+# --- 6. Normalize between arrays ---
+exprs_norm <- normalizeBetweenArrays(exprs_by_gene, method="quantile")
+
+colors <- ifelse(group == "Normal", "skyblue", "pink")
+
+par(mar = c(8,4,4,2))  
+boxplot(exprs_norm,
+        las = 2,                 
+        col = colors,
+        outline = FALSE,
+        cex.axis = 0.7,         
+        ylab = "Expression (log2 normalized)",
+        main = "GSE65194 - Expression Distribution")  
+
+# PCA
+pca <- prcomp(t(exprs_norm), scale.=TRUE)
+plot(pca$x[,1], pca$x[,2], col=ifelse(group=="Normal","blue","red"),
+     pch=16, xlab="PC1", ylab="PC2", main="PCA: Normal vs Cancer")
+legend("topright", legend=c("Normal","Cancer"), col=c("blue","red"), pch=16)
+
+# --- 8. Differential expression with limma ---
+design <- model.matrix(~ group)
+colnames(design) <- c("Intercept", "Cancer_vs_Normal")
+fit <- lmFit(exprs_norm, design)
+fit <- eBayes(fit)
+
+results <- topTable(fit, coef="Cancer_vs_Normal", number=Inf, adjust.method="BH")
+results$FoldChange <- 2^(results$logFC)
+
+# --- 9. Focus on RGS gene family ---
+rgs_genes <- c(paste0("RGS",1:14), paste0("RGS",16:22))
+rgs_all <- subset(results, rownames(results) %in% rgs_genes)
+rgs_signif <- subset(rgs_all, adj.P.Val < 0.05 & abs(logFC) >= 1)
+
+# --- 10. Volcano plot with RGS highlighted ---
+volc <- results
+volc$Gene <- rownames(volc)
+volc$negLogP <- -log10(volc$P.Value)
+volc$Category <- "NS"
+volc$Category[volc$logFC >= 1 & volc$adj.P.Val < 0.05] <- "Up"
+volc$Category[volc$logFC <= -1 & volc$adj.P.Val < 0.05] <- "Down"
+
+rgs_hits <- subset(volc, Gene %in% rgs_genes & adj.P.Val < 0.05 & abs(logFC) >= 1)
+rgs_hits$Label <- paste0(rgs_hits$Gene," (",signif(rgs_hits$logFC,2),")")
+
+p <- ggplot(volc, aes(x=logFC,y=negLogP)) +
+  geom_point(aes(color=Category), alpha=0.6, size=1.2) +
+  scale_color_manual(values=c("Up"="red","Down"="blue","NS"="grey")) +
+  geom_vline(xintercept=c(-1,1), linetype="dashed") +
+  geom_hline(yintercept=-log10(0.05), linetype="dashed") +
+  geom_point(data=rgs_hits, aes(x=logFC,y=negLogP), shape=21, fill="yellow", color="black", size=3) +
+  geom_text_repel(data=rgs_hits, aes(label=Label), size=3) +
+  labs(title="Volcano plot: Cancer vs Normal", x="log2 Fold Change", y="-log10(P-value)") +
+  theme_minimal()
+print(p)
+
+ggsave("volcano_GSE65194_RGS.png", p, width=6, height=5)
+
+# --- 11. Save results to Excel ---
+write_xlsx(list(
+  "All_genes"=results,
+  "RGS_all"=rgs_all,
+  "RGS_significant"=rgs_signif
+), "DE_results_GSE65194_RGS.xlsx")
+
+###############################################################
