@@ -1,0 +1,113 @@
+# Install and load packages
+install.packages(c("readr", "pheatmap", "dplyr", "stringr", "org.Hs.eg.db", "RColorBrewer"), dependencies = TRUE)
+library(readr)
+library(pheatmap)
+library(dplyr)
+library(stringr)
+library(org.Hs.eg.db)
+library(RColorBrewer)
+
+# Read RNAseq (RPKM) and cell line annotations
+data_dir <- "path/to/data"
+rna_file <- file.path(data_dir, "CCLE_RNAseq_genes_rpkm_20180929.gct.gz")
+anno_file <- file.path(data_dir, "Cell_lines_annotations_20181226.txt")
+
+rna_merged <- read.delim(gzfile(rna_file), skip = 2, row.names = 1, check.names = FALSE)
+annotations <- read.delim(anno_file, row.names = 1, check.names = FALSE)
+
+# Prepare Ensembl IDs
+ensembl_ids <- rownames(rna_merged)
+ensembl_base <- sub("\\..*", "", ensembl_ids)  # Remove versions
+gene_symbols <- mapIds(org.Hs.eg.db, keys = ensembl_base, column = "SYMBOL", keytype = "ENSEMBL", multiVals = "first")
+
+# RGS genes list
+rgs_genes <- c("RGS1", "RGS2", "RGS3", "RGS4", "RGS5", "RGS6", "RGS7", "RGS8", "RGS9", 
+               "RGS10", "RGS11", "RGS12", "RGS13", "RGS14", "RGS16", "RGS17", "RGS18", 
+               "RGS19", "RGS20", "RGS21", "RGS22")
+
+# Select RGS genes
+rna_rgs_indices <- which(gene_symbols %in% rgs_genes)
+rna_rgs <- rna_merged[rna_rgs_indices, ]
+rownames(rna_rgs) <- gene_symbols[rna_rgs_indices]
+
+
+# Print column names to check (replace annotation columns based on this output)
+print(colnames(annotations))
+
+# Clean names function
+clean_names <- function(x) {
+  x %>% str_replace_all("[-\\. ]", "") %>% toupper()
+}
+
+# Breast cell lines list (for reference, but we'll use annotations for filtering)
+breast_names_base <- c(
+  "HCC2157", "Hs 739.T", "HCC38", "DU4475", "MDA-MB-175-VII", "YMB-1", "T-47D", "Hs 742.T", "KPL-1",
+  "MDA-MB-231", "HCC2218", "HCC1954", "CAMA-1", "HMC-1-8", "AU565", "Hs 578T", "BT-20", "MDA-MB-361",
+  "MDA-MB-436", "SK-BR-3", "HCC1143", "HCC1937", "HCC1569", "HCC1395", "HCC1187", "ZR-75-1", "HCC70",
+  "MCF7", "HCC202", "MDA-MB-157", "EFM-192A", "EVSA-T", "MDA-MB-453", "EFM-19", "BT-474", "Hs 606.T",
+  "MDA-MB-415", "MDA-MB-468", "BT-549", "CAL-85-1", "HMEL", "HCC1806", "UACC-812", "CAL-148",
+  "MDA-MB-134-VI", "HCC1500", "HCC1599", "UACC-893", "HDQ-P1", "HCC1419", "BT-483", "Hs 281.T",
+  "HCC1428", "Hs 274.T", "ZR-75-30", "Hs 343.T", "CAL-51", "CAL-120", "JIMT-1", "MB 157"
+)
+
+# Filter breast cell lines columns using annotations
+colnames(rna_rgs) <- clean_names(colnames(rna_rgs))
+rownames(annotations) <- clean_names(rownames(annotations))
+
+# Select common cell lines
+common_cells <- intersect(colnames(rna_rgs), rownames(annotations))
+
+# Subset annotations
+annotation_df <- annotations[common_cells, , drop = FALSE]
+
+# Filter for breast cancer only (remove fibroblast)
+annotation_df <- annotation_df %>%
+  filter(grepl("breast", Site_Primary, ignore.case = TRUE)) %>%  # Adjust "Site_Primary" based on print(colnames(annotations))
+  filter(!grepl("fibroblast", tolower(stripped_cell_line_name), ignore.case = TRUE))  # Adjust "stripped_cell_line_name"
+
+# Subset RNA data for breast cancer cell lines
+rna_breast <- rna_rgs[, rownames(annotation_df)]
+
+# Remove "_BREAST" from column names
+colnames(rna_breast) <- str_remove(colnames(rna_breast), "_BREAST$")
+
+# Check dimensions
+print(dim(rna_breast))
+print(head(colnames(rna_breast)))
+
+# Clean data for NA or zero SD
+rna_breast_clean <- rna_breast[apply(rna_breast, 1, function(x) all(!is.na(x))), ]
+rna_breast_clean <- rna_breast_clean[apply(rna_breast_clean, 1, function(x) sd(x, na.rm = TRUE) > 0), ]
+
+# Z-score normalization
+scaled_mat <- t(scale(t(as.matrix(rna_breast_clean))))
+scaled_mat <- scaled_mat[apply(scaled_mat, 1, function(x) all(is.finite(x))), ]
+
+# Define custom color palette
+color_palette <- colorRampPalette(c("blue", "white", "yellow", "red"))(100)
+
+# Plot heatmap with custom settings
+p <- pheatmap(scaled_mat,
+              cluster_rows = TRUE,
+              cluster_cols = TRUE,
+              fontsize_row = 8,
+              fontsize_col = 8,
+              main = "RGS Expression in Breast Cancer Cell Lines",
+              annotation_col = annotation_df[, c("Pathology", "Age", "Race")],  # Adjust column names based on print(colnames(annotations))
+              annotation_legend_param = list(fontsize = 4),
+              annotation_width = 0.03,
+              color = color_palette,
+              border_color = "black",
+              treeheight_row = 20,
+              treeheight_col = 20)
+
+# Save heatmap
+png("RGS_heatmap_optimized.png", width = 1000, height = 600)
+print(p)
+dev.off()
+
+
+
+
+
+
