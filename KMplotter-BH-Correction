@@ -1,0 +1,52 @@
+# Check and install required packages if not already installed
+if (!require("dplyr", quietly = TRUE)) {
+  install.packages("dplyr")
+}
+if (!require("knitr", quietly = TRUE)) {
+  install.packages("knitr")
+}
+
+library(dplyr)
+library(knitr)
+
+# ---- Overall Survival (OS) data from KMplotter ----
+genes_OS <- c("RGS3", "RGS5", "RGS12", "RGS13", "RGS16", "RGS18", "RGS22")
+pvals_OS <- c(0.013, 0.005, 0.0075, 6.9e-07, 0.024, 0.0011, 0.027)
+
+df_OS <- data.frame(
+  Gene = genes_OS,
+  P_value = pvals_OS,
+  Survival = "OS"
+)
+
+# ---- Relapse-Free Survival (RFS) data from KMplotter ----
+genes_RFS <- c("RGS3", "RGS5", "RGS6", "RGS7", "RGS8", "RGS9", "RGS10",
+               "RGS11", "RGS12", "RGS13", "RGS14", "RGS17", "RGS18",
+               "RGS22", "RGS4")
+pvals_RFS <- c(0.00085, 1e-16, 3.2e-05, 4.5e-08, 0.0024, 2.4e-06,
+               0.00014, 2.5e-08, 4.6e-14, 3e-11, 9.6e-08, 4.2e-05,
+               0.00082, 1.1e-08, 4.5e-05)
+
+df_RFS <- data.frame(
+  Gene = genes_RFS,
+  P_value = pvals_RFS,
+  Survival = "RFS"
+)
+
+# ---- Combine OS and RFS datasets ----
+df_all <- bind_rows(df_OS, df_RFS)
+
+# ---- Adjust p-values using Benjamini-Hochberg method ----
+df_all$Adjusted_P_BH <- p.adjust(df_all$P_value, method = "BH")
+
+# ---- Assign significance status (threshold: 0.05) ----
+df_all$Significant <- ifelse(df_all$Adjusted_P_BH < 0.05, "Yes", "No")
+
+# ---- Sort by p-value within each survival type (OS and RFS) ----
+df_all <- df_all %>%
+  group_by(Survival) %>%
+  arrange(P_value, .by_group = TRUE)
+
+# ---- Display results as a publication-ready table ----
+kable(df_all, digits = 4, align = "c",
+      col.names = c("Gene", "P-value", "Survival", "Adjusted P (BH)", "Significant"))
