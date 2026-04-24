@@ -1,0 +1,99 @@
+# =========================================================================
+# Project: Microarray Meta-Analysis
+# Dataset: GSE65194
+# Description: Downloading data, filtering cell lines, Max Mean probe 
+#              selection, and Differential Expression Analysis using limma.
+# =========================================================================
+
+# 1. Load Required Libraries
+library(GEOquery)
+library(limma)
+library(dplyr)
+library(tibble)
+
+# =========================================================================
+# 2. Download and Load Dataset
+# =========================================================================
+print("Downloading GSE65194...")
+# getGPL = FALSE is used to prevent timeout errors during download
+gse <- getGEO("GSE65194", GSEMatrix = TRUE, getGPL = FALSE) 
+gse <- gse[[1]]
+
+# Extract expression matrix and phenotype (sample) data
+ex <- exprs(gse)
+pdata <- pData(gse)
+
+# =========================================================================
+# 3. Filter Samples (Keep Normal and Tumor, Remove Cell Lines)
+# =========================================================================
+# Identifying Normal (Healthy) and Tumor samples while filtering out cell lines
+pdata_filtered <- pdata %>%
+  rownames_to_column("Sample_ID") %>%
+  # Filter out samples containing the word "cell line"
+  filter(!grepl("cell line", `sample_group:ch1`, ignore.case = TRUE)) %>%
+  # Categorize remaining samples into "Normal" and "Tumor"
+  mutate(Condition = ifelse(grepl("Healthy", `sample_group:ch1`, ignore.case = TRUE), "Normal", "Tumor")) %>%
+  column_to_rownames("Sample_ID")
+
+# Subset the expression matrix to match the filtered samples
+ex_filtered <- ex[, rownames(pdata_filtered)]
+
+# =========================================================================
+# 4. Probe to Gene Mapping & Max Mean Selection
+# =========================================================================
+# NOTE: Assume 'gpl_data' is your platform annotation dataframe containing 'ID' and 'Gene_Symbol'
+# ex_df <- merge(gpl_data, ex_filtered, by.x = "ID", by.y = "row.names")
+
+# Selecting the best probe for each gene using the Max Mean method
+ex_max_mean <- ex_df %>%
+  filter(Gene_Symbol != "" & !is.na(Gene_Symbol)) %>% # Remove unannotated probes
+  # Calculate mean expression across all GSM sample columns
+  mutate(Mean_Expr = rowMeans(select(., starts_with("GSM")), na.rm = TRUE)) %>%
+  group_by(Gene_Symbol) %>%
+  # Keep the single probe with the highest mean expression per gene
+  slice_max(order_by = Mean_Expr, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(-Mean_Expr) # Remove the temporary Mean_Expr column
+
+# =========================================================================
+# 5. Prepare Matrix for limma
+# =========================================================================
+ex_matrix_GSE65194 <- ex_max_mean %>%
+  select(-ID) %>% # Drop the probe ID column
+  column_to_rownames("Gene_Symbol") # Set Gene_Symbol as row names
+
+# Convert to matrix and enforce numeric data type to prevent limma errors
+ex_matrix_GSE65194 <- as.matrix(ex_matrix_GSE65194)
+mode(ex_matrix_GSE65194) <- "numeric"
+
+# =========================================================================
+# 6. Differential Expression Analysis (limma)
+# =========================================================================
+# Define experimental conditions as a factor
+Condition <- factor(pdata_filtered$Condition, levels = c("Normal", "Tumor"))
+
+# Create Design Matrix
+design <- model.matrix(~ 0 + Condition)
+colnames(design) <- c("Normal", "Tumor")
+
+# Create Contrast Matrix (Tumor vs Normal)
+cont_matrix <- makeContrasts(Tumor_vs_Normal = Tumor - Normal, levels = design)
+
+# Fit the linear model
+fit <- lmFit(ex_matrix_GSE65194, design)
+fit2 <- contrasts.fit(fit, cont_matrix)
+fit2 <- eBayes(fit2)
+
+# =========================================================================
+# 7. Extract Results
+# =========================================================================
+# Extract top genes with False Discovery Rate (FDR) adjustment
+results_GSE65194 <- topTable(fit2, adjust = "fdr", number = Inf)
+
+# Add Dataset identifier column for the downstream Meta-Analysis phase
+results_GSE65194$Dataset <- "GSE65194"
+results_GSE65194$Gene_Symbol <- rownames(results_GSE65194)
+
+# Save the final processed results
+write.csv(results_GSE65194, "GSE65194_limma_results.csv", row.names = FALSE)
+print("Analysis for GSE65194 completed successfully!")
