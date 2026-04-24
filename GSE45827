@@ -1,0 +1,112 @@
+# ==============================================================================
+# Project: RGS Gene Family Meta-Analysis in Breast Cancer
+# Dataset: GSE45827 (Platform: GPL570)
+# Description: Differential Expression Analysis of RGS genes (Tumor vs Normal)
+# ==============================================================================
+
+# 1. Load Required Libraries
+# ------------------------------------------------------------------------------
+library(GEOquery)
+library(limma)
+library(WGCNA)
+library(hgu133plus2.db) # Annotation package for GPL570
+
+# Define the list of RGS genes
+rgs_genes <- c("RGS1", "RGS2", "RGS3", "RGS4", "RGS5", "RGS6", "RGS7", "RGS8", 
+               "RGS9", "RGS10", "RGS11", "RGS12", "RGS13", "RGS14", "RGS16", 
+               "RGS17", "RGS18", "RGS19", "RGS20", "RGS21", "RGS22")
+
+# 2. Load Expression and Phenotype Data
+# ------------------------------------------------------------------------------
+# Load the series matrix file (Replace with your actual file path if needed)
+gse_GSE45827 <- getGEO(filename = "F:/darsi/RGS/R/GSE45827/GSE45827_series_matrix.txt.gz", getGPL = FALSE)
+
+# Extract expression matrix and phenotype data
+expr_GSE45827 <- exprs(gse_GSE45827)
+pheno_GSE45827 <- pData(gse_GSE45827)
+
+# 3. Phenotype Cleaning and Sample Filtering
+# ------------------------------------------------------------------------------
+# Group samples based on the 'title' column:
+# - Normal -> "Normal"
+# - Basal, Her2, Luminal A, Luminal B -> "Tumor"
+# - CellLine -> "Exclude"
+pheno_GSE45827$condition <- ifelse(grepl("Normal", pheno_GSE45827$title, ignore.case = TRUE), "Normal",
+                            ifelse(grepl("Basal|Her2|Luminal", pheno_GSE45827$title, ignore.case = TRUE), "Tumor",
+                            ifelse(grepl("CellLine", pheno_GSE45827$title, ignore.case = TRUE), "Exclude", "Unknown")))
+
+# Filter out "Exclude" (Cell Lines) and "Unknown" samples
+keep_samples_GSE45827 <- pheno_GSE45827$condition %in% c("Normal", "Tumor")
+pheno_clean_GSE45827 <- pheno_GSE45827[keep_samples_GSE45827, ]
+expr_clean_GSE45827 <- expr_GSE45827[, keep_samples_GSE45827]
+
+# Convert condition to a factor and set "Normal" as the reference level
+pheno_clean_GSE45827$condition <- factor(pheno_clean_GSE45827$condition, levels = c("Normal", "Tumor"))
+
+# Check dimensions to ensure filtering was successful (Expected: 11 Normal, 130 Tumor)
+table(pheno_clean_GSE45827$condition)
+
+# 4. Probe to Gene Annotation & Summarization (Max Mean)
+# ------------------------------------------------------------------------------
+# Get probe to gene symbol mapping for GPL570
+probe_to_gene_GSE45827 <- data.frame(
+  ProbeID = keys(hgu133plus2.db, keytype = "PROBEID"),
+  GeneSymbol = mapIds(hgu133plus2.db, keys = keys(hgu133plus2.db, keytype = "PROBEID"), 
+                      column = "SYMBOL", keytype = "PROBEID", multiVals = "first")
+)
+
+# Remove probes that do not map to any gene symbol
+probe_to_gene_GSE45827 <- na.omit(probe_to_gene_GSE45827)
+probe_to_gene_GSE45827 <- probe_to_gene_GSE45827[probe_to_gene_GSE45827$GeneSymbol != "", ]
+
+# Match mapping with our expression matrix
+mapped_probes_GSE45827 <- intersect(rownames(expr_clean_GSE45827), probe_to_gene_GSE45827$ProbeID)
+expr_annotated_GSE45827 <- expr_clean_GSE45827[mapped_probes_GSE45827, ]
+gene_symbols_GSE45827 <- probe_to_gene_GSE45827$GeneSymbol[match(mapped_probes_GSE45827, probe_to_gene_GSE45827$ProbeID)]
+
+# Collapse multiple probes targeting the same gene using 'MaxMean'
+collapsed_GSE45827 <- WGCNA::collapseRows(
+  datET = expr_annotated_GSE45827,
+  rowGroup = gene_symbols_GSE45827,
+  rowID = rownames(expr_annotated_GSE45827),
+  method = "MaxMean"
+)
+
+# Extract the final gene-level expression matrix
+expr_gene_GSE45827 <- collapsed_GSE45827$datETcollapsed
+
+# 5. Differential Expression Analysis (Limma)
+# ------------------------------------------------------------------------------
+# Create design matrix
+design_GSE45827 <- model.matrix(~ 0 + pheno_clean_GSE45827$condition)
+colnames(design_GSE45827) <- c("Normal", "Tumor")
+
+# Fit linear model
+fit_GSE45827 <- lmFit(expr_gene_GSE45827, design_GSE45827)
+
+# Make contrasts (Tumor vs Normal)
+contrast_matrix_GSE45827 <- makeContrasts(Tumor_vs_Normal = Tumor - Normal, levels = design_GSE45827)
+fit_contrast_GSE45827 <- contrasts.fit(fit_GSE45827, contrast_matrix_GSE45827)
+
+# Apply Empirical Bayes smoothing
+fit_eb_GSE45827 <- eBayes(fit_contrast_GSE45827)
+
+# Extract full results
+limma_res_GSE45827 <- topTable(fit_eb_GSE45827, coef = "Tumor_vs_Normal", number = Inf, genelist = rownames(expr_gene_GSE45827))
+colnames(limma_res_GSE45827)[1] <- "GeneSymbol"
+
+# Calculate Standard Error (SE) using formula: SE = |logFC| / |t|
+limma_res_GSE45827$SE <- abs(limma_res_GSE45827$logFC) / abs(limma_res_GSE45827$t)
+
+# 6. Filter Results for RGS Gene Family and Save
+# ------------------------------------------------------------------------------
+# Subset the results to only include RGS genes
+rgs_res_GSE45827 <- limma_res_GSE45827[limma_res_GSE45827$GeneSymbol %in% rgs_genes, ]
+
+# Save the RGS specific results to a CSV file
+write.csv(rgs_res_GSE45827, file = "GSE45827_RGS_limma.csv", row.names = FALSE)
+
+# (Optional) Save the full DE results as well
+# write.csv(limma_res_GSE45827, file = "GSE45827_Full_limma.csv", row.names = FALSE)
+
+print("GSE45827 Analysis Completed Successfully! RGS results saved.")
