@@ -1,0 +1,91 @@
+# ==============================================================================
+# Script: Processing GSE65216 (GPL570) for Meta-analysis
+# Description: Phenotype filtering, Probe to Gene mapping (Max Mean), and Limma
+# ==============================================================================
+
+library(GEOquery)
+library(dplyr)
+library(WGCNA)
+library(limma)
+library(hgu133plus2.db) # Annotation package for GPL570
+
+# 1. Load Data (assuming you already loaded the matrix file)
+# gse_GSE65216 <- getGEO("GSE65216", GSEMatrix = TRUE, getGPL = FALSE)
+# We specifically use the GPL570 platform (first item in the list)
+gset_GSE65216 <- gse_GSE65216[[1]] 
+ex_GSE65216 <- exprs(gset_GSE65216)
+pheno_GSE65216 <- pData(gset_GSE65216)
+
+# 2. Clean Phenotype Data (Group into Tumor vs Normal, exclude Cell Lines)
+pheno_GSE65216$condition <- NA
+# Mark 'Healthy' as Normal
+pheno_GSE65216$condition[grepl("Healthy", pheno_GSE65216$title, ignore.case = TRUE)] <- "Normal"
+# Mark all breast cancer subtypes as Tumor
+pheno_GSE65216$condition[grepl("Her2|Luminal|TNBC", pheno_GSE65216$title, ignore.case = TRUE)] <- "Tumor"
+
+# Remove NA values (which automatically excludes CellLine samples)
+pdata_clean_GSE65216 <- pheno_GSE65216[!is.na(pheno_GSE65216$condition), ]
+
+# Filter the expression matrix to match the clean phenotype data
+ex_clean_GSE65216 <- ex_GSE65216[, rownames(pdata_clean_GSE65216)]
+
+# Ensure 'condition' is a factor with correct reference level
+pdata_clean_GSE65216$condition <- factor(pdata_clean_GSE65216$condition, levels = c("Normal", "Tumor"))
+
+print("Sample counts after cleaning:")
+print(table(pdata_clean_GSE65216$condition))
+
+# 3. Probe to Gene Mapping (GPL570)
+# Extract mappings from the annotation package
+probe_to_gene_GSE65216 <- data.frame(
+  PROBEID = keys(hgu133plus2.db, keytype="PROBEID"),
+  Gene_Symbol = mapIds(hgu133plus2.db, keys=keys(hgu133plus2.db, keytype="PROBEID"), column="SYMBOL", keytype="PROBEID", multiVals="first")
+)
+
+# Remove probes without a mapped gene symbol
+probe_to_gene_clean_GSE65216 <- probe_to_gene_GSE65216[!is.na(probe_to_gene_GSE65216$Gene_Symbol), ]
+
+# Keep only probes that exist in our expression matrix
+mapped_probes_GSE65216 <- intersect(rownames(ex_clean_GSE65216), probe_to_gene_clean_GSE65216$PROBEID)
+ex_mapped_GSE65216 <- ex_clean_GSE65216[mapped_probes_GSE65216, ]
+
+# Apply WGCNA collapseRows (Max Mean method)
+cat("Running Max Mean collapse...\n")
+collapsed_GSE65216 <- collapseRows(
+  datET = ex_mapped_GSE65216, 
+  rowGroup = probe_to_gene_clean_GSE65216$Gene_Symbol[match(mapped_probes_GSE65216, probe_to_gene_clean_GSE65216$PROBEID)], 
+  rowID = rownames(ex_mapped_GSE65216), 
+  method = "MaxMean"
+)
+
+ex_final_GSE65216 <- collapsed_GSE65216$datETcollapsed
+cat("Dimensions of final expression matrix:\n")
+print(dim(ex_final_GSE65216))
+
+# 4. Differential Expression Analysis (Limma)
+# Create Design Matrix
+design_GSE65216 <- model.matrix(~ pdata_clean_GSE65216$condition)
+colnames(design_GSE65216) <- c("Intercept", "Tumor_vs_Normal")
+
+# Fit the linear model
+fit_GSE65216 <- lmFit(ex_final_GSE65216, design_GSE65216)
+fit_GSE65216 <- eBayes(fit_GSE65216)
+
+# Extract full results
+limma_results_GSE65216 <- topTable(fit_GSE65216, coef = "Tumor_vs_Normal", number = Inf)
+
+# Calculate Standard Error (SE = |logFC| / |t|)
+limma_results_GSE65216$SE <- abs(limma_results_GSE65216$logFC) / abs(limma_results_GSE65216$t)
+
+# Add Dataset Name
+limma_results_GSE65216$Dataset <- "GSE65216"
+
+# 5. Extract RGS Genes
+rgs_genes <- paste0("RGS", 1:22)
+rgs_results_GSE65216 <- limma_results_GSE65216[rownames(limma_results_GSE65216) %in% rgs_genes, ]
+
+# Sort by Gene Symbol
+rgs_results_GSE65216 <- rgs_results_GSE65216[order(rownames(rgs_results_GSE65216)), ]
+
+print("Final RGS Results for GSE65216:")
+head(rgs_results_GSE65216)
