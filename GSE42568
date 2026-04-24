@@ -1,0 +1,112 @@
+# =========================================================================
+# Project: RGS Family Meta-Analysis
+# Dataset: GSE42568 (Validation Dataset)
+# Platform: GPL570 [HG-U133_Plus_2] Affymetrix Human Genome U133 Plus 2.0 Array
+# Objective: Differential Expression Analysis of RGS genes (Tumor vs Normal)
+# =========================================================================
+
+# Load required libraries
+library(GEOquery)
+library(limma)
+library(dplyr)
+library(tibble)
+library(tidyr)
+
+# -------------------------------------------------------------------------
+# Step 1: Load Expression Matrix and Phenotype Data
+# -------------------------------------------------------------------------
+file_path_GSE42568 <- "F:/darsi/RGS/R/GSE42568/GSE42568_series_matrix.txt.gz"
+gse_GSE42568 <- getGEO(filename = file_path_GSE42568, getGPL = FALSE)
+
+ex_data_GSE42568 <- exprs(gse_GSE42568)
+pdata_GSE42568 <- pData(gse_GSE42568)
+
+# -------------------------------------------------------------------------
+# Step 2: Clean Phenotype Data (Group Assignment)
+# -------------------------------------------------------------------------
+pheno_clean_GSE42568 <- pdata_GSE42568 %>%
+  rownames_to_column(var = "Sample") %>%
+  mutate(condition = case_when(
+    grepl("Normal breast", title, ignore.case = TRUE) ~ "Normal",
+    grepl("Breast cancer", title, ignore.case = TRUE) ~ "Tumor",
+    TRUE ~ NA_character_
+  )) %>%
+  select(Sample, title, condition) %>%
+  drop_na(condition) # Remove any samples that don't fit our groups
+
+# Align expression columns with clean phenotype rows
+ex_data_GSE42568 <- ex_data_GSE42568[, pheno_clean_GSE42568$Sample]
+
+# -------------------------------------------------------------------------
+# Step 3: Platform Annotation (Map Probes to Genes)
+# -------------------------------------------------------------------------
+# Download or load GPL570 annotation data
+gpl_GSE42568 <- getGEO("GPL570", destdir = "F:/darsi/RGS/R/GSE42568/")
+gpl_data_GSE42568 <- Table(gpl_GSE42568)
+
+# Extract Probe ID and Gene Symbol
+probe_gene_GSE42568 <- gpl_data_GSE42568 %>%
+  select(ID, `Gene Symbol`) %>%
+  rename(Gene.Symbol = `Gene Symbol`) %>%
+  # Handle cases with multiple symbols (e.g., "RGS1 /// RGS2") by taking the first one
+  mutate(Gene.Symbol = sapply(strsplit(as.character(Gene.Symbol), " /// "), `[`, 1)) %>%
+  filter(Gene.Symbol != "" & !is.na(Gene.Symbol))
+
+# -------------------------------------------------------------------------
+# Step 4: Merge Data and Apply Max Mean Aggregation
+# -------------------------------------------------------------------------
+# Convert expression matrix to dataframe and join with gene symbols
+ex_df_GSE42568 <- as.data.frame(ex_data_GSE42568) %>%
+  rownames_to_column(var = "ID") %>%
+  inner_join(probe_gene_GSE42568, by = "ID")
+
+# Calculate row means and select the probe with the maximum mean expression per gene
+ex_maxmean_GSE42568 <- ex_df_GSE42568 %>%
+  rowwise() %>%
+  mutate(MeanExp = mean(c_across(starts_with("GSM")), na.rm = TRUE)) %>%
+  ungroup() %>%
+  group_by(Gene.Symbol) %>%
+  slice_max(order_by = MeanExp, n = 1, with_ties = FALSE) %>%
+  ungroup()
+
+# Create final clean gene matrix for Limma
+gene_matrix_GSE42568 <- ex_maxmean_GSE42568 %>%
+  select(-ID, -MeanExp) %>%
+  column_to_rownames(var = "Gene.Symbol") %>%
+  as.matrix()
+
+# -------------------------------------------------------------------------
+# Step 5: Differential Expression Analysis (Limma)
+# -------------------------------------------------------------------------
+# Define factor for conditions
+condition_GSE42568 <- factor(pheno_clean_GSE42568$condition, levels = c("Normal", "Tumor"))
+
+# Create Design Matrix
+design_GSE42568 <- model.matrix(~ 0 + condition_GSE42568)
+colnames(design_GSE42568) <- levels(condition_GSE42568)
+
+# Fit linear model
+fit_GSE42568 <- lmFit(gene_matrix_GSE42568, design_GSE42568)
+
+# Create Contrast Matrix (Tumor vs Normal)
+contrast_matrix_GSE42568 <- makeContrasts(Tumor_vs_Normal = Tumor - Normal, levels = design_GSE42568)
+
+# Fit contrasts and apply empirical Bayes smoothing
+fit2_GSE42568 <- contrasts.fit(fit_GSE42568, contrast_matrix_GSE42568)
+fit2_GSE42568 <- eBayes(fit2_GSE42568)
+
+# Extract top table for all genes
+all_results_GSE42568 <- topTable(fit2_GSE42568, coef = "Tumor_vs_Normal", number = Inf) %>%
+  rownames_to_column(var = "Gene")
+
+# -------------------------------------------------------------------------
+# Step 6: Filter for RGS Genes and Export
+# -------------------------------------------------------------------------
+# Filter rows where gene symbol starts with "RGS"
+rgs_results_GSE42568 <- all_results_GSE42568 %>%
+  filter(grepl("^RGS", Gene))
+
+# Save results to CSV
+write.csv(rgs_results_GSE42568, "F:/darsi/RGS/R/GSE42568/RGS_limma_results_GSE42568.csv", row.names = FALSE)
+
+print("Analysis for GSE42568 completed successfully! Results saved to CSV.")
