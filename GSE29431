@@ -1,0 +1,82 @@
+# ==============================================================================
+# Project: Breast Cancer Bioinformatics Meta-Analysis
+# Description: Preprocessing GEO dataset (GSE29431), probe-to-gene mapping, 
+#              cleaning multiple symbols, and selecting representative probes 
+#              using the Max Mean Expression method.
+# ==============================================================================
+
+# 1. Load Required Libraries
+library(GEOquery)
+library(dplyr)
+library(tibble)
+
+# ==============================================================================
+# 2. Download and Load Data (GitHub Version)
+# ==============================================================================
+# Note: For local execution without internet, replace this section with your 
+# local file reading code (e.g., read.table(gzfile(...))).
+
+cat("Downloading and loading GSE29431...\n")
+gse_29431 <- getGEO("GSE29431", GSEMatrix = TRUE, AnnotGPL = TRUE)
+if (length(gse_29431) > 1) idx <- grep("GPL570", attr(gse_29431, "names")) else idx <- 1
+gse <- gse_29431[[idx]]
+
+# Extract Expression Matrix
+ex_29431 <- exprs(gse)
+ex_filtered_29431 <- as.data.frame(ex_29431)
+
+# Extract GPL Annotation (Probe IDs and Gene Symbols)
+gpl_data <- fData(gse)[, c("ID", "Gene symbol")]
+colnames(gpl_data)[2] <- "Gene_Symbol" # Rename for convenience
+
+# ==============================================================================
+# 3. Merge Platform Data with Expression Matrix
+# ==============================================================================
+
+cat("Merging expression data with annotation...\n")
+ex_df_29431 <- merge(gpl_data, ex_filtered_29431, by.x = "ID", by.y = "row.names")
+
+# ==============================================================================
+# 4. Clean Gene Symbols & Select Representative Probes (Max Mean Method)
+# ==============================================================================
+
+cat("Filtering probes and applying Max Mean Method...\n")
+ex_max_mean_29431 <- ex_df_29431 %>%
+  # 1. Clean multiple gene symbols (remove everything after " ///")
+  mutate(Gene_Symbol = sub(" ///.*", "", Gene_Symbol)) %>%
+  
+  # 2. Filter out rows with empty or NA gene symbols
+  filter(Gene_Symbol != "" & !is.na(Gene_Symbol)) %>%
+  
+  # 3. Calculate mean expression for each probe across all samples
+  mutate(Mean_Expression = rowMeans(select(., -ID, -Gene_Symbol), na.rm = TRUE)) %>%
+  
+  # 4. Group by Gene Symbol
+  group_by(Gene_Symbol) %>%
+  
+  # 5. Keep the probe with the highest mean expression for each gene
+  slice_max(order_by = Mean_Expression, n = 1, with_ties = FALSE) %>%
+  
+  # 6. Ungroup the dataframe
+  ungroup() %>%
+  
+  # 7. Remove unnecessary columns (Probe ID and Calculated Mean)
+  select(-ID, -Mean_Expression)
+
+# ==============================================================================
+# 5. Finalize Matrix for limma Analysis
+# ==============================================================================
+
+# Convert Gene_Symbol column to row names
+ex_final_29431 <- ex_max_mean_29431 %>%
+  column_to_rownames(var = "Gene_Symbol")
+
+# Convert dataframe to a numeric matrix (Required for limma)
+ex_final_matrix <- as.matrix(ex_final_29431)
+
+# Quality Check: Display dimensions and the first few rows/columns
+cat("\nFinal Matrix Dimensions (Genes x Samples):\n")
+print(dim(ex_final_matrix))
+
+cat("\nFirst few rows and columns of the final matrix:\n")
+head(ex_final_matrix[, 1:5])
